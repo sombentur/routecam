@@ -1,0 +1,33 @@
+# Secrets and local configuration: never commit
+.env
+.env.*
+*.key
+*.pem
+secrets*
+*token*
+*credential*
+
+# Databases, logs, caches
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+.cache/
+
+# Dependencies and build output
+node_modules/
+dist/
+
+# Test output and After Effects files produced by runs
+tests/results/
+samples/Auto-Save/
+samples/*.aep.bak
+*.aep.tmp
+
+# Editor and OS clutter
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.tmp

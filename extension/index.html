@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Routecam</title>
+<script>
+  // CEP exposes Node's require/module to the page. Keep a private handle for
+  // platform.js, then hide them so the shared core files attach to window normally.
+  (function () {
+    var r = (window.cep_node && window.cep_node.require) || (typeof require === 'function' ? require : null);
+    window.__rcNodeRequire = r;
+    try { if (typeof module !== 'undefined') { window.module = undefined; } } catch (e) {}
+    try { if (typeof exports !== 'undefined') { window.exports = undefined; } } catch (e) {}
+  })();
+</script>
+<link rel="stylesheet" href="css/panel.css">
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="brand"><span class="logo"></span>Routecam</div>
+    <div id="compName" class="chip" title="Active composition">No composition</div>
+    <div id="linkState" class="chip dim">Draft</div>
+    <span class="grow"></span>
+    <button id="btnReload" class="ghost" title="Read the composition again (use after editing or undoing in After Effects)">Reload</button>
+  </header>
+
+  <div id="stage">
+    <canvas id="editor"></canvas>
+
+    <div id="toolbar">
+      <div class="seg" id="toolSeg">
+        <button data-tool="select" class="on" title="Select and move points (V)">Select</button>
+        <button data-tool="pen" title="Pen: click to add points, drag to pull curve handles, click the line to insert (P)">Pen</button>
+        <button data-tool="sketch" title="Sketch a route freehand (S)">Sketch</button>
+      </div>
+      <div class="seg" id="viewSeg">
+        <button data-view="top" class="on" title="Top view: X against depth (1)">Top</button>
+        <button data-view="front" title="Front view: as the composition faces you (2)">Front</button>
+        <button data-view="side" title="Side view: depth against elevation (3)">Side</button>
+      </div>
+      <div class="seg" id="whichSeg">
+        <button data-which="route" class="on" title="Edit the camera route">Camera route</button>
+        <button data-which="target" title="Edit the path the camera looks at">Target path</button>
+      </div>
+      <div class="seg">
+        <button id="btnFit" title="Fit everything in view (F)">Fit</button>
+        <button id="btnUndo" title="Undo in the editor (Ctrl+Z)">Undo</button>
+        <button id="btnRedo" title="Redo (Ctrl+Y)">Redo</button>
+        <button id="btnDelete" title="Delete selected points (Delete)">Delete</button>
+      </div>
+    </div>
+
+    <div id="pip">
+      <canvas id="preview" title="Camera preview. Click to swap with the editor."></canvas>
+      <img id="aeFrame" alt="" title="Frame rendered by After Effects. Click to return to the live preview.">
+      <div class="pipbar">
+        <span>Camera preview</span>
+        <button id="btnGrab" class="mini" title="Render this frame in After Effects and show it here">AE frame</button>
+        <button id="btnSwap" class="mini" title="Make the preview large">Enlarge</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="transport">
+    <button id="btnPlay" title="Play the preview">Play</button>
+    <input id="scrub" type="range" min="0" max="1000" value="0">
+    <span id="readout">0.00 s</span>
+    <label class="check" title="Move After Effects' time indicator with this slider so the Composition panel shows the real frame"><input id="follow" type="checkbox"> Follow in AE</label>
+  </div>
+
+  <nav id="tabs">
+    <button data-tab="route" class="on">Route</button>
+    <button data-tab="motion">Motion</button>
+    <button data-tab="camera">Camera</button>
+    <button data-tab="layers">Layers</button>
+    <button data-tab="presets">Presets</button>
+    <button data-tab="help">Help</button>
+  </nav>
+
+  <main>
+    <!-- ROUTE -->
+    <section id="tab-route" class="tab on">
+      <div class="card">
+        <h3>Start a route</h3>
+        <div class="row">
+          <button id="btnImport" title="Uses the mask or shape path selected in After Effects">Use selected mask / shape path</button>
+          <select id="importPlane" title="How a flat path is placed in 3D">
+            <option value="floor">as a floor plan (top view)</option>
+            <option value="front">as drawn in the comp (front)</option>
+          </select>
+        </div>
+        <div id="importHint" class="hint">Draw a mask or shape path with After Effects' Pen tool, select it, then press the button. Or draw directly in the editor above.</div>
+        <div class="row">
+          <select id="shapeSel"></select>
+          <button id="btnShape">Insert shape</button>
+          <span class="grow"></span>
+          <button id="btnReverse" title="Swap the start and the end">Reverse</button>
+          <button id="btnClear" class="danger">Clear</button>
+        </div>
+        <label class="check"><input id="closed" type="checkbox" data-bind="closed"> Closed loop (the route returns to its first point)</label>
+      </div>
+
+      <div class="card">
+        <h3 id="ptTitle">Selected point</h3>
+        <div id="ptNone" class="hint">Select a point in the editor to set its depth, elevation, pause and speed.</div>
+        <div id="ptFields" class="grid" hidden>
+          <label>X<input id="ptX" type="number" step="10"></label>
+          <label title="Height above the centre of the composition (up is positive)">Elevation<input id="ptElev" type="number" step="10"></label>
+          <label title="Distance into the scene (After Effects Z)">Depth<input id="ptDepth" type="number" step="10"></label>
+          <label>Curve<select id="ptType"><option value="auto">Smooth (auto)</option><option value="bezier">Bezier handles</option><option value="corner">Corner</option></select></label>
+          <label class="routeOnly" title="Hold the camera here for this long">Pause (s)<input id="ptPause" type="number" min="0" step="0.1"></label>
+          <label class="routeOnly" title="Speed of the stretch that leaves this point, relative to the rest">Speed &times;<input id="ptSpeed" type="number" min="0.05" max="20" step="0.1"></label>
+          <label class="routeOnly" title="Camera roll when it reaches this point (blank = not set here)">Roll (&deg;)<input id="ptRoll" type="number" step="1" placeholder="&ndash;"></label>
+          <label class="routeOnly" title="Focal length when the camera reaches this point (blank = not set here)">Focal (mm)<input id="ptFocal" type="number" min="5" step="1" placeholder="&ndash;"></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Points <span id="routeStats" class="stat"></span></h3>
+        <div id="ptList" class="list"></div>
+      </div>
+    </section>
+
+    <!-- MOTION -->
+    <section id="tab-motion" class="tab">
+      <div class="card">
+        <h3>Travel</h3>
+        <div class="grid">
+          <label>Start (s)<input type="number" step="0.1" min="0" data-bind="timing.start"></label>
+          <label>Duration (s)<input type="number" step="0.1" min="0.1" data-bind="timing.duration"></label>
+        </div>
+        <div class="row">
+          <button id="btnFitComp">Fill the composition</button>
+          <button id="btnFitWork">Fill the work area</button>
+        </div>
+        <div class="hint">Speed is constant along the whole route unless you add easing, pauses or per-point speed (Route tab).</div>
+      </div>
+      <div class="card">
+        <h3>Easing</h3>
+        <div class="grid">
+          <label>Ease<select data-bind="timing.ease">
+            <option value="none">None (constant speed)</option><option value="start">Ease away at the start</option>
+            <option value="end">Ease to a stop at the end</option><option value="both">Both ends</option></select></label>
+          <label title="How long the acceleration lasts (keyframe influence)">Strength (%)<input type="number" min="1" max="100" step="5" data-bind="timing.easeStrength"></label>
+          <label title="How softly the camera slows into and out of pauses. 0 = stop dead.">Pause softness (%)<input type="number" min="0" max="100" step="5" data-bind="timing.pauseEase"></label>
+        </div>
+        <canvas id="speedGraph" height="70" title="Progress along the route against time"></canvas>
+        <div id="motionStats" class="hint"></div>
+      </div>
+    </section>
+
+    <!-- CAMERA -->
+    <section id="tab-camera" class="tab">
+      <div class="card">
+        <h3>Where the camera looks</h3>
+        <div class="grid">
+          <label>Aim<select data-bind="aim.mode">
+            <option value="ahead">Look ahead along the route</option><option value="layer">Track a layer</option>
+            <option value="path">Follow the target path</option><option value="manual">Manual (keyframe it yourself)</option></select></label>
+          <label class="aim-ahead" title="How far ahead of itself the camera looks, as a share of the route">Look ahead (%)<input type="number" min="0.1" max="50" step="0.5" data-bind="aim.lookAhead"></label>
+          <label class="aim-ahead" title="Averages the look-ahead point so the camera turns smoothly through tight curves">Smoothing (%)<input type="number" min="0" max="25" step="0.5" data-bind="aim.smooth"></label>
+          <label class="aim-layer">Layer<select id="aimLayer"></select></label>
+          <label class="aim-path check wide"><input type="checkbox" data-bind="aim.targetLinked"> Target moves in step with the camera</label>
+        </div>
+        <div class="hint aim-path">Draw the target path with the "Target path" switch in the editor toolbar. One point makes a fixed target.</div>
+        <div class="hint aim-manual">The camera's Point of Interest is left free for your own keyframes in After Effects.</div>
+      </div>
+      <div class="card">
+        <h3>Roll and banking</h3>
+        <div class="grid">
+          <label title="Constant roll. Per-point roll (Route tab) overrides this.">Roll (&deg;)<input type="number" step="1" data-bind="camera.roll"></label>
+          <label title="How strongly the camera leans into turns. 0 switches banking off.">Banking (%)<input type="number" step="10" data-bind="camera.bank"></label>
+          <label>Max bank (&deg;)<input type="number" min="0" max="90" step="1" data-bind="camera.maxBank"></label>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Lens</h3>
+        <div class="grid">
+          <label title="Per-point focal length (Route tab) overrides this.">Focal length (mm)<input type="number" min="5" max="400" step="1" data-bind="camera.focal"></label>
+          <label class="check wide"><input type="checkbox" data-bind="camera.dof"> Depth of field</label>
+          <label class="dof">F-stop<input type="number" min="0.5" max="64" step="0.1" data-bind="camera.fstop"></label>
+          <label class="dof">Focus on<select data-bind="camera.focusMode">
+            <option value="aim">What the camera aims at</option><option value="layer">A layer</option><option value="fixed">A fixed distance</option></select></label>
+          <label class="dof focus-layer">Focus layer<select id="focusLayer"></select></label>
+          <label class="dof focus-fixed">Focus distance (px)<input type="number" min="1" step="50" data-bind="camera.focusDistance"></label>
+          <label class="dof">Blur level (%)<input type="number" min="0" max="500" step="10" data-bind="camera.blur"></label>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Keyframes</h3>
+        <div class="row">
+          <button id="btnBake" title="Replace the live expressions on the camera with one keyframe per frame">Bake camera to keyframes</button>
+          <button id="btnUnbake" title="Remove baked keyframes and reconnect the camera to the route">Restore live link</button>
+        </div>
+        <div class="row"><button id="btnRemoveRig" class="danger">Remove Routecam from this composition</button></div>
+      </div>
+    </section>
+
+    <!-- LAYERS -->
+    <section id="tab-layers" class="tab">
+      <div class="card">
+        <h3>Layers to animate <span id="layerCount" class="stat"></span></h3>
+        <div class="row">
+          <button id="btnUseSel" title="Tick the layers that are selected in After Effects">Use After Effects selection</button>
+          <button id="btnAll3D">All 3D layers</button>
+          <button id="btnNone">None</button>
+        </div>
+        <div id="layerList" class="list tall"></div>
+      </div>
+      <div class="card">
+        <h3>Animation</h3>
+        <div class="grid">
+          <label class="wide">Preset<select id="animPreset"></select></label>
+          <label>Direction<select data-anim="direction"><option value="in">Animate in</option><option value="out">Animate out</option></select></label>
+          <label>Ease<select data-anim="ease"><option value="out">Soft landing</option><option value="in">Slow start</option><option value="inout">Both</option><option value="back">Overshoot</option><option value="linear">Linear</option></select></label>
+          <label title="How far past the end it swings (Overshoot ease)">Overshoot (%)<input type="number" min="0" max="60" step="1" data-anim="overshoot"></label>
+          <label title="Sideways offset (right is positive)">Move X<input type="number" step="10" data-anim="pos.0"></label>
+          <label title="Vertical offset. Positive is DOWN, as in After Effects.">Move Y<input type="number" step="10" data-anim="pos.1"></label>
+          <label title="Depth offset (away from the default camera is positive)">Move Z<input type="number" step="10" data-anim="pos.2"></label>
+          <label>Rotate X (&deg;)<input type="number" step="5" data-anim="rot.0"></label>
+          <label>Rotate Y (&deg;)<input type="number" step="5" data-anim="rot.1"></label>
+          <label>Rotate Z (&deg;)<input type="number" step="5" data-anim="rot.2"></label>
+          <label title="Size at the far end of the animation">Scale (%)<input type="number" min="0" step="5" data-anim="scale"></label>
+          <label>Opacity (%)<input type="number" min="0" max="100" step="5" data-anim="opacity"></label>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Timing</h3>
+        <div class="grid">
+          <label class="wide">Starts<select data-anim="trigger">
+            <option value="approach">As the camera approaches each layer</option>
+            <option value="progress">At a point in the camera's progress</option>
+            <option value="time">At a time (not linked to the camera)</option></select></label>
+          <label class="trig-approach" title="How far before the camera reaches the layer the animation starts, as a share of the route">Lead (%)<input type="number" min="0" max="100" step="1" data-anim="lead"></label>
+          <label class="trig-progress">Start at (%)<input type="number" min="0" max="100" step="1" data-anim="startPct"></label>
+          <label class="trig-progress" title="Extra route progress between one layer and the next">Stagger (%)<input type="number" min="0" max="50" step="0.5" data-anim="staggerPct"></label>
+          <label class="trig-sync" title="How much of the route the animation lasts">Length (%)<input type="number" min="0.1" max="100" step="0.5" data-anim="span"></label>
+          <label class="trig-time">Start (s)<input type="number" min="0" step="0.1" data-anim="startTime"></label>
+          <label class="trig-time">Duration (s)<input type="number" min="0.05" step="0.05" data-anim="duration"></label>
+          <label class="trig-time" title="Delay between one layer and the next">Stagger (s)<input type="number" min="0" step="0.02" data-anim="stagger"></label>
+          <label class="trig-order">Order<select data-anim="order">
+            <option value="route">Along the route</option><option value="selection">As listed</option><option value="depth">Near to far</option>
+            <option value="index">Top layer first</option><option value="random">Random</option></select></label>
+        </div>
+        <div class="row">
+          <button id="btnAnimate" class="primary">Animate layers</button>
+          <button id="btnUnanimate" title="Put the ticked layers back exactly as they were">Remove animation</button>
+        </div>
+        <div class="hint">Linked animation is ordinary keyframes on each layer, played by an expression that reads the camera's Route Progress. Retime the camera and the layers follow.</div>
+      </div>
+    </section>
+
+    <!-- PRESETS -->
+    <section id="tab-presets" class="tab">
+      <div class="card">
+        <h3>Route presets</h3>
+        <div class="row"><input id="routePresetName" type="text" placeholder="Name this route"><button id="btnSaveRoute">Save current route</button></div>
+        <div id="routePresets" class="list"></div>
+        <div class="hint">A route preset stores the path, timing, aim and lens settings.</div>
+      </div>
+      <div class="card">
+        <h3>Layer animation presets</h3>
+        <div class="row"><input id="animPresetName" type="text" placeholder="Name this animation"><button id="btnSaveAnim">Save current animation</button></div>
+        <div id="animPresets" class="list"></div>
+      </div>
+      <div class="card">
+        <h3>Sample</h3>
+        <div class="row"><button id="btnSample">Create the sample composition</button></div>
+        <div class="hint">Builds a new composition with a curved camera flight through ten animated 3D cards. Your open compositions are not changed.</div>
+        <div id="presetPath" class="hint"></div>
+      </div>
+    </section>
+
+    <!-- HELP -->
+    <section id="tab-help" class="tab">
+      <div class="card">
+        <h3>How it works</h3>
+        <ol class="steps">
+          <li>Draw a route in the editor (Pen or Sketch), insert a shape, or select a mask / shape path in After Effects and press <b>Use selected mask / shape path</b>.</li>
+          <li>Switch between Top, Front and Side views to set each point's depth and elevation, or type them in the Route tab.</li>
+          <li>Press <b>Apply to After Effects</b>. Routecam adds a camera, a route path and a controller to the composition.</li>
+          <li>Set timing on the Motion tab and the aim, roll and lens on the Camera tab. With <b>Live</b> ticked, every change is applied straight away.</li>
+          <li>Tick layers on the Layers tab and press <b>Animate layers</b> to bring them in as the camera approaches.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Drawing in the Composition panel</h3>
+        <p>After Effects does not let panels like this one draw or pick up clicks inside the Composition panel, so routes are drawn in the editor above. Two things work natively instead:</p>
+        <ul class="steps">
+          <li><b>Before:</b> draw a mask or shape path with After Effects' own Pen tool and import it here.</li>
+          <li><b>After:</b> the route is the motion path of the <b>RC Route Path</b> layer. Select that layer and reshape the path in the Composition panel, then press <b>Reload</b> here.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Shortcuts (click the editor first)</h3>
+        <table class="keys">
+          <tr><td>V / P / S</td><td>Select, Pen, Sketch</td></tr>
+          <tr><td>1 / 2 / 3</td><td>Top, Front, Side view</td></tr>
+          <tr><td>Wheel, right-drag</td><td>Zoom, pan (or hold Space and drag)</td></tr>
+          <tr><td>Double-click a point</td><td>Smooth &rarr; corner &rarr; Bezier</td></tr>
+          <tr><td>Alt-drag a handle</td><td>Break the two handles apart</td></tr>
+          <tr><td>Shift-drag</td><td>Move along one axis</td></tr>
+          <tr><td>Arrows</td><td>Nudge 10 px (Shift: 100 px)</td></tr>
+          <tr><td>Delete</td><td>Remove selected points</td></tr>
+          <tr><td>Ctrl+Z / Ctrl+Y</td><td>Undo / redo in the editor</td></tr>
+          <tr><td>F</td><td>Fit the view</td></tr>
+        </table>
+        <p class="hint">Every change made in After Effects is one step in After Effects' own Edit &gt; Undo.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div id="msg" class="msg">Ready.</div>
+    <label class="check" title="Apply every change to After Effects as you make it (once the route is in the composition)"><input id="live" type="checkbox" checked> Live</label>
+    <button id="btnApply" class="primary">Apply to After Effects</button>
+  </footer>
+</div>
+
+<script src="js/core/route.js"></script>
+<script src="js/core/presets.js"></script>
+<script src="js/platform.js"></script>
+<script src="js/preview.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

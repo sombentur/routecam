@@ -1,0 +1,14 @@
+{
+  "name": "routecam",
+  "version": "0.1.0",
+  "description": "Routecam - path-driven 3D camera and layer animation panel for Adobe After Effects (CEP + ExtendScript)",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/dev-server.mjs",
+    "test": "node --test \"tests/unit/*.test.mjs\"",
+    "test:ae": "node tests/ae-e2e.mjs",
+    "install-extension": "powershell -ExecutionPolicy Bypass -File scripts/install.ps1"
+  }
+}

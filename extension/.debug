@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Remote debugging port, used by the automated After Effects tests (tests/ae-e2e.mjs)
+     and by Chrome DevTools at http://localhost:8199 while developing. Not shipped in dist builds. -->
+<ExtensionList>
+  <Extension Id="com.routecam.panel">
+    <HostList>
+      <Host Name="AEFT" Port="8199"/>
+    </HostList>
+  </Extension>
+</ExtensionList>
